@@ -12,7 +12,11 @@ import SwiftData
 struct comicswriterApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Series.self,
+            Issue.self,
+            Page.self,
+            Panel.self,
+            Character.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -25,7 +29,7 @@ struct comicswriterApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            SeriesListView()
         }
         .modelContainer(sharedModelContainer)
     }
