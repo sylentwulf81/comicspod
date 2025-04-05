@@ -1,11 +1,12 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct IssueListView: View {
     @Environment(\.modelContext) private var modelContext
     let series: Series
     @State private var showingAddIssueSheet = false
-    @State private var issueForDeletion: Issue? = nil
+    @State private var issueForDeletion: ComicIssue? = nil
     @State private var showingDeleteConfirmation = false
     
     private let gridColumns = [
@@ -58,7 +59,7 @@ struct IssueListView: View {
         .navigationTitle(series.title)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingAddIssueSheet) {
-            AddIssueSheet(series: series)
+            AddIssueSheetView(series: series)
         }
         .alert("Delete Issue", isPresented: $showingDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -79,7 +80,7 @@ struct IssueListView: View {
         }
     }
     
-    private func deleteIssue(_ issue: Issue) {
+    private func deleteIssue(_ issue: ComicIssue) {
         // First delete all pages, panels, and characters in the issue
         for page in issue.pages {
             for panel in page.panels {
@@ -104,7 +105,7 @@ struct IssueListView: View {
 }
 
 struct IssueCoverView: View {
-    let issue: Issue
+    let issue: ComicIssue
     
     var body: some View {
         VStack(spacing: 0) {
@@ -159,7 +160,7 @@ struct IssueCoverView: View {
     }
 }
 
-struct AddIssueSheet: View {
+struct AddIssueSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     let series: Series
@@ -223,7 +224,7 @@ struct AddIssueSheet: View {
     }
     
     private func createIssue() {
-        let newIssue = Issue(
+        let newIssue = ComicIssue(
             title: title,
             issueNumber: issueNumber,
             synopsis: synopsis,
@@ -238,11 +239,13 @@ struct AddIssueSheet: View {
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Series.self, Issue.self, Page.self, Panel.self, Character.self, configurations: config)
+    let container = try! ModelContainer(for: Series.self, ComicIssue.self, Page.self, Panel.self, Character.self, configurations: config)
     
     let previewSeries = Series(title: "Amazing Series")
     container.mainContext.insert(previewSeries)
     
-    return IssueListView(series: previewSeries)
-        .modelContainer(container)
+    return NavigationStack {
+        IssueListView(series: previewSeries)
+            .modelContainer(container)
+    }
 } 

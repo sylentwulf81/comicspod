@@ -4,10 +4,11 @@ import UniformTypeIdentifiers
 
 struct ScriptEditorView: View {
     @Environment(\.modelContext) private var modelContext
-    let issue: Issue
+    let issue: ComicIssue
     @State private var selectedPage: Page?
     @State private var selectedPanel: Panel?
     @State private var showingScriptPreview = false
+    @State private var showingSettingsSheet = false
     
     var body: some View {
         HStack(spacing: 0) {
@@ -33,6 +34,14 @@ struct ScriptEditorView: View {
         .navigationTitle("\(issue.title) - Issue #\(issue.issueNumber)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    showingSettingsSheet = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+            }
+            
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showingScriptPreview = true
@@ -43,6 +52,10 @@ struct ScriptEditorView: View {
         }
         .sheet(isPresented: $showingScriptPreview) {
             ScriptPreviewView(issue: issue)
+        }
+        .sheet(isPresented: $showingSettingsSheet) {
+            SettingsView(issue: issue)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .onAppear {
             // Select the first page by default if available
@@ -56,7 +69,7 @@ struct ScriptEditorView: View {
 
 struct ScriptOutlineView: View {
     @Environment(\.modelContext) private var modelContext
-    let issue: Issue
+    let issue: ComicIssue
     @Binding var selectedPage: Page?
     @Binding var selectedPanel: Panel?
     
@@ -339,18 +352,8 @@ struct PageEditorView: View {
         
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check if this is a duplicate name in the current panel
-        let duplicates = targetPanel.characters.filter { $0.name == trimmedName }
-        let finalName: String
-        
-        if !duplicates.isEmpty {
-            // Create a name with a number suffix (Character, Character 2, etc.)
-            finalName = "\(trimmedName) \(duplicates.count + 1)"
-        } else {
-            finalName = trimmedName
-        }
-        
-        let newCharacter = Character(name: finalName)
+        // Create a character with the exact name provided without adding a suffix
+        let newCharacter = Character(name: trimmedName)
         newCharacter.panel = targetPanel
         newCharacter.createdAt = Date() // Ensure createdAt is set for proper sorting
         modelContext.insert(newCharacter)
@@ -583,14 +586,20 @@ struct PanelEditorWrapper: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.blue.opacity(0.07) : Color(.systemBackground))
+                    .shadow(color: isSelected ? Color.blue.opacity(0.3) : Color.black.opacity(0.05), 
+                           radius: isSelected ? 4 : 2, 
+                           x: 0, 
+                           y: isSelected ? 2 : 1)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.blue : Color.gray.opacity(0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.blue.opacity(0.6) : Color.gray.opacity(0.2), 
+                          lineWidth: isSelected ? 1.5 : 1)
             )
             .padding(.horizontal)
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 }
 
@@ -713,6 +722,8 @@ struct PanelEditorView: View {
     @State private var showingDeleteConfirmation = false
     @State private var showingCharacterSheet = false
     @State private var newCharacterName = ""
+    @State private var panelDetailsHeight: CGFloat = 80
+    @State private var isDetailsExpanded: Bool = true
     
     init(panel: Panel, isSelected: Bool) {
         self.panel = panel
@@ -781,23 +792,55 @@ struct PanelEditorView: View {
                 Spacer()
                 
                 Button {
-                    // Toggle expanded state if needed
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        isDetailsExpanded.toggle()
+                    }
                 } label: {
-                    Image(systemName: "chevron.down")
+                    Image(systemName: isDetailsExpanded ? "chevron.up" : "chevron.down")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
             }
             
-            TextEditor(text: $panelDetails)
-                .font(.body)
-                .padding(8)
-                .background(Color(.systemGray6))
-                .cornerRadius(6)
-                .frame(height: 100)
-                .onChange(of: panelDetails) { _, newValue in
-                    panel.details = newValue
+            if isDetailsExpanded {
+                // Adaptive text editor that grows with content
+                ZStack(alignment: .topLeading) {
+                    // Invisible text view that determines the size
+                    Text(panelDetails.isEmpty ? " " : panelDetails)
+                        .font(.body)
+                        .padding(8)
+                        .padding(.bottom, 6) // Extra padding to ensure scrolling works well
+                        .opacity(0)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ViewHeightKey.self,
+                                value: geometry.size.height
+                            )
+                        })
+                    
+                    TextEditor(text: $panelDetails)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(6)
+                        .frame(minHeight: 80, maxHeight: max(80, panelDetailsHeight)) // Use calculated height with minimum
+                        .onChange(of: panelDetails) { _, newValue in
+                            panel.details = newValue
+                        }
                 }
+                .onPreferenceChange(ViewHeightKey.self) { height in
+                    // Set the height plus a bit extra for comfortable editing
+                    self.panelDetailsHeight = min(200, height + 20)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            
+            // Visual divider
+            if !panel.characters.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+            }
             
             // Character dialogues with improved styling and arrow-based reordering
             ForEach(panel.characters.sorted(by: { $0.createdAt < $1.createdAt })) { character in
@@ -808,6 +851,10 @@ struct PanelEditorView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color(.systemBackground))
+                                )
                         )
                         .frame(maxWidth: .infinity)
                     
@@ -921,18 +968,8 @@ struct PanelEditorView: View {
         
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check if this is a duplicate name in the current panel
-        let duplicates = panel.characters.filter { $0.name == trimmedName }
-        let finalName: String
-        
-        if !duplicates.isEmpty {
-            // Create a name with a number suffix (Character, Character 2, etc.)
-            finalName = "\(trimmedName) \(duplicates.count + 1)"
-        } else {
-            finalName = trimmedName
-        }
-        
-        let newCharacter = Character(name: finalName)
+        // Create a character with the exact name provided without adding a suffix
+        let newCharacter = Character(name: trimmedName)
         newCharacter.panel = panel
         newCharacter.createdAt = Date() // Ensure createdAt is set for proper sorting
         modelContext.insert(newCharacter)
@@ -1005,17 +1042,48 @@ struct CharacterDialogueView: View {
     @State private var characterDialogue: String
     @State private var isExpanded = true
     @State private var showingDeleteConfirmation = false
+    @State private var modifier: String = ""
+    @State private var dialogueHeight: CGFloat = 60 // Store text height
+    
+    // Common character dialogue modifiers based on Blambot guidelines
+    private let commonModifiers = [
+        "OFF", "WHISPER", "BURST", "WEAK", "SINGING", "THOUGHTS"
+    ]
     
     init(character: Character) {
         self.character = character
         self._characterDialogue = State(initialValue: character.dialogue)
+        
+        // Extract any existing modifier from the character name
+        if let openParen = character.name.lastIndex(of: "("),
+           let closeParen = character.name.lastIndex(of: ")"),
+           openParen < closeParen {
+            let modifierStart = character.name.index(after: openParen)
+            let modifierEnd = closeParen
+            let extractedModifier = String(character.name[modifierStart..<modifierEnd])
+            self._modifier = State(initialValue: extractedModifier)
+        }
+    }
+    
+    // Computed property to get base name without modifier
+    private var baseName: String {
+        if let openParen = character.name.lastIndex(of: "(") {
+            return String(character.name[..<openParen]).trimmingCharacters(in: .whitespaces)
+        } else {
+            return character.name
+        }
+    }
+    
+    // Computed property to check if character is a special type
+    private var isSpecialCharacter: Bool {
+        return character.name == "CAPTION" || character.name == "SFX"
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Character name header with controls
             HStack {
-                // Replace drag handle with a more appropriate icon
+                // Use appropriate icon based on character type
                 Image(systemName: character.name == "CAPTION" ? "text.quote" : 
                        character.name == "SFX" ? "waveform" : "person.fill")
                     .font(.caption)
@@ -1023,12 +1091,58 @@ struct CharacterDialogueView: View {
                     .frame(width: 20)
                     .padding(.trailing, 4)
                 
-                Text(character.name.uppercased())
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
+                // For regular characters, show the name and any modifiers
+                if !isSpecialCharacter {
+                    Text(baseName.uppercased())
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    // Show modifier if present
+                    if !modifier.isEmpty {
+                        Text("(\(modifier))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.leading, 2)
+                    }
+                } else {
+                    // For CAPTION and SFX, just show the name
+                    Text(character.name.uppercased())
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                }
                 
                 Spacer()
+                
+                // Modifier dropdown for regular characters
+                if !isSpecialCharacter {
+                    Menu {
+                        Button("No Modifier") {
+                            updateCharacterName(withModifier: nil)
+                        }
+                        
+                        Divider()
+                        
+                        ForEach(commonModifiers, id: \.self) { mod in
+                            Button(mod) {
+                                updateCharacterName(withModifier: mod)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: "tag")
+                                .font(.caption)
+                            
+                            if !modifier.isEmpty {
+                                Text(modifier)
+                                    .font(.caption2)
+                            }
+                        }
+                        .padding(4)
+                    }
+                    .buttonStyle(.borderless)
+                }
                 
                 Button {
                     isExpanded.toggle()
@@ -1053,16 +1167,36 @@ struct CharacterDialogueView: View {
             
             // Dialogue text
             if isExpanded {
-                TextEditor(text: $characterDialogue)
-                    .font(.body)
-                    .padding(8)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(6)
-                    .frame(height: 70) // Smaller height to accommodate arrows
-                    .onChange(of: characterDialogue) { _, newValue in
-                        character.dialogue = newValue
-                    }
-                    .padding(.horizontal, 6)
+                ZStack(alignment: .topLeading) {
+                    // Invisible text view that determines the size
+                    Text(characterDialogue.isEmpty ? " " : characterDialogue)
+                        .font(.body)
+                        .padding(8)
+                        .padding(.bottom, 6)
+                        .opacity(0)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ViewHeightKey.self,
+                                value: geometry.size.height
+                            )
+                        })
+                    
+                    TextEditor(text: $characterDialogue)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(6)
+                        .frame(minHeight: 60, maxHeight: max(60, dialogueHeight))
+                        .onChange(of: characterDialogue) { _, newValue in
+                            character.dialogue = newValue
+                        }
+                }
+                .onPreferenceChange(ViewHeightKey.self) { height in
+                    // Set the height plus a bit extra for comfortable editing
+                    self.dialogueHeight = min(180, height + 20)
+                }
+                .padding(.horizontal, 6)
             }
         }
         .alert("Delete \(character.name)", isPresented: $showingDeleteConfirmation) {
@@ -1077,13 +1211,30 @@ struct CharacterDialogueView: View {
             Text("Are you sure you want to delete this character? This action cannot be undone.")
         }
     }
+    
+    private func updateCharacterName(withModifier newModifier: String?) {
+        let baseNameToUse = baseName
+        
+        // Set the new name (with or without modifier)
+        if let newModifier = newModifier, !newModifier.isEmpty {
+            character.name = "\(baseNameToUse) (\(newModifier))"
+            modifier = newModifier
+        } else {
+            character.name = baseNameToUse
+            modifier = ""
+        }
+    }
 }
 
 // New view for formatted script preview
 struct ScriptPreviewView: View {
-    let issue: Issue
+    let issue: ComicIssue
     @Environment(\.dismiss) private var dismiss
     @State private var exportFormat: ExportFormat = .standard
+    @State private var isExporting = false
+    @State private var pdfURL: URL?
+    @State private var writerName: String = UserDefaults.standard.string(forKey: "writerName") ?? ""
+    @State private var showingSettingsSheet = false
     
     enum ExportFormat: String, CaseIterable, Identifiable {
         case standard = "Standard"
@@ -1096,32 +1247,41 @@ struct ScriptPreviewView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    // Title block
-                    VStack(alignment: .center, spacing: 8) {
+                    // Industry standard title block per Blambot guidelines
+                    VStack(alignment: .center, spacing: 12) {
                         Text(issue.title.uppercased())
-                            .font(.title)
-                            .fontWeight(.bold)
+                            .font(.system(size: 24, weight: .bold))
                             .multilineTextAlignment(.center)
                         
                         Text("ISSUE #\(issue.issueNumber)")
-                            .font(.title2)
-                            .fontWeight(.medium)
+                            .font(.system(size: 20, weight: .semibold))
                             .multilineTextAlignment(.center)
+                            .padding(.bottom, 4)
+                        
+                        if !writerName.isEmpty {
+                            Text("Written by: \(writerName)")
+                                .font(.system(size: 16, weight: .medium))
+                                .padding(.top, 2)
+                        }
                         
                         if !issue.synopsis.isEmpty {
                             Text(issue.synopsis)
                                 .font(.body)
                                 .italic()
-                                .padding(.top, 8)
+                                .padding(.top, 12)
                                 .multilineTextAlignment(.center)
                         }
                     }
                     .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
                     .padding(.bottom, 30)
                     
                     // Pages and panels
                     ForEach(issue.pages.sorted(by: { $0.pageNumber < $1.pageNumber })) { page in
                         FormattedPageView(page: page, format: exportFormat)
+                            .padding(.bottom, 50) // Add space for page breaks in PDF
                     }
                 }
                 .padding()
@@ -1139,6 +1299,14 @@ struct ScriptPreviewView: View {
                 
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
+                        Button {
+                            showingSettingsSheet = true
+                        } label: {
+                            Label("Writer Information", systemImage: "person")
+                        }
+                        
+                        Divider()
+                        
                         Picker("Format", selection: $exportFormat) {
                             ForEach(ExportFormat.allCases) { format in
                                 Text(format.rawValue).tag(format)
@@ -1146,7 +1314,11 @@ struct ScriptPreviewView: View {
                         }
                         
                         Button {
-                            shareScript()
+                            // Save writer name if provided
+                            if !writerName.isEmpty {
+                                UserDefaults.standard.set(writerName, forKey: "writerName")
+                            }
+                            generatePDFAndShare()
                         } label: {
                             Label("Share PDF", systemImage: "square.and.arrow.up")
                         }
@@ -1155,14 +1327,202 @@ struct ScriptPreviewView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingSettingsSheet) {
+                NavigationStack {
+                    Form {
+                        Section("Writer Information") {
+                            TextField("Writer name", text: $writerName)
+                                .autocapitalization(.words)
+                        }
+                    }
+                    .navigationTitle("Script Information")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                if !writerName.isEmpty {
+                                    UserDefaults.standard.set(writerName, forKey: "writerName")
+                                }
+                                showingSettingsSheet = false
+                            }
+                        }
+                    }
+                }
+                .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $isExporting) {
+                if let pdfURL = pdfURL {
+                    ActivityViewController(activityItems: [pdfURL])
+                }
+            }
+            .onAppear {
+                // Try to load saved writer name
+                self.writerName = UserDefaults.standard.string(forKey: "writerName") ?? ""
+            }
         }
     }
     
-    private func shareScript() {
-        // This is a placeholder for PDF generation and sharing functionality
-        // In a real implementation, this would generate a PDF and present
-        // a share sheet for exporting the script
+    private func generatePDFAndShare() {
+        // Create page-by-page PDF content to ensure proper page breaks
+        var views: [AnyView] = []
+        
+        // Add title page
+        let titlePage = VStack(alignment: .center, spacing: 16) {
+            Text(issue.title.uppercased())
+                .font(.system(size: 28, weight: .bold))
+                .multilineTextAlignment(.center)
+                .padding(.top, 100)
+            
+            Text("ISSUE #\(issue.issueNumber)")
+                .font(.system(size: 22, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .padding(.bottom, 8)
+            
+            if !writerName.isEmpty {
+                Text("Written by:")
+                    .font(.system(size: 18, weight: .medium))
+                    .padding(.top, 20)
+                
+                Text(writerName)
+                    .font(.system(size: 18, weight: .bold))
+            }
+            
+            if !issue.synopsis.isEmpty {
+                Text("Synopsis:")
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(.top, 40)
+                
+                Text(issue.synopsis)
+                    .font(.body)
+                    .italic()
+                    .padding(.top, 4)
+                    .padding(.horizontal, 40)
+                    .multilineTextAlignment(.center)
+            }
+            
+            Spacer()
+            
+            Text("CONFIDENTIAL")
+                .font(.caption)
+                .foregroundColor(.gray)
+                .padding(.bottom, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+        .background(Color.white)
+        
+        views.append(AnyView(titlePage))
+        
+        // Add each page as a separate PDF page with proper numbering
+        for page in issue.pages.sorted(by: { $0.pageNumber < $1.pageNumber }) {
+            let pageView = VStack(alignment: .leading, spacing: 20) {
+                FormattedPageView(page: page, format: exportFormat)
+                
+                Spacer()
+            }
+            .padding(40)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color.white)
+            
+            views.append(AnyView(pageView))
+        }
+        
+        // Create a PDF from multiple pages
+        let pdfData = generateMultiPagePDF(views: views)
+        
+        // Create a temporary file
+        let tempDir = FileManager.default.temporaryDirectory
+        let filename = "\(issue.title) - Issue \(issue.issueNumber).pdf"
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: "\\", with: "-")
+        let url = tempDir.appendingPathComponent(filename)
+        
+        // Write to temp file
+        do {
+            try pdfData.write(to: url)
+            self.pdfURL = url
+            self.isExporting = true
+        } catch {
+            print("Failed to create PDF: \(error.localizedDescription)")
+        }
     }
+    
+    // Helper to generate multi-page PDF
+    private func generateMultiPagePDF(views: [AnyView]) -> Data {
+        let pageWidth: CGFloat = 612  // 8.5 inches at 72 dpi
+        let pageHeight: CGFloat = 792 // 11 inches at 72 dpi
+        
+        let pdfMetaData = [
+            kCGPDFContextCreator: "ComicsWriter",
+            kCGPDFContextAuthor: writerName,
+            kCGPDFContextTitle: "\(issue.title) - Issue #\(issue.issueNumber)"
+        ]
+        
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = pdfMetaData as [String: Any]
+        
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight),
+                                            format: format)
+        
+        let data = renderer.pdfData { context in
+            for (pageIndex, view) in views.enumerated() {
+                context.beginPage()
+                
+                // Convert SwiftUI view to UIImage
+                let hostingController = UIHostingController(rootView: view
+                    .frame(width: pageWidth, height: pageHeight)
+                )
+                
+                hostingController.view.bounds = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
+                hostingController.view.backgroundColor = .white
+                
+                let frameSize = hostingController.view.frame.size
+                let contentSize = hostingController.view.intrinsicContentSize
+                let viewScale = min(pageWidth/frameSize.width, pageHeight/frameSize.height)
+                
+                hostingController.view.transform = CGAffineTransform(scaleX: viewScale, y: viewScale)
+                
+                // Render the view to the PDF context
+                let rect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
+                hostingController.view.drawHierarchy(in: rect, afterScreenUpdates: true)
+                
+                // Add page number at the bottom
+                let pageNumberFont = UIFont.systemFont(ofSize: 10)
+                let pageNumberAttributes: [NSAttributedString.Key: Any] = [
+                    .font: pageNumberFont,
+                    .foregroundColor: UIColor.gray
+                ]
+                
+                // Don't show page number on the title page
+                if pageIndex > 0 {
+                    let pageNumberText = "\(pageIndex)" // 1-indexed page numbers
+                    let pageNumberSize = pageNumberText.size(withAttributes: pageNumberAttributes)
+                    let pageNumberX = (pageWidth - pageNumberSize.width) / 2
+                    let pageNumberY = pageHeight - 36 // Bottom margin
+                    
+                    pageNumberText.draw(at: CGPoint(x: pageNumberX, y: pageNumberY), withAttributes: pageNumberAttributes)
+                }
+            }
+        }
+        
+        return data
+    }
+}
+
+// Custom activity view controller wrapper
+struct ActivityViewController: UIViewControllerRepresentable {
+    var activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 struct FormattedPageView: View {
@@ -1171,11 +1531,11 @@ struct FormattedPageView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Page header
+            // Page header - Make it bigger and bolder per Blambot guidelines
             Text("PAGE \(page.pageNumber)")
-                .font(.headline)
-                .fontWeight(.bold)
-                .padding(.bottom, 4)
+                .font(.system(size: 18, weight: .bold))
+                .padding(.bottom, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             
             // Panels
             ForEach(page.panels.sorted(by: { $0.panelNumber < $1.panelNumber })) { panel in
@@ -1194,85 +1554,436 @@ struct FormattedPanelView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Panel header
+            // Panel header - Bold and clear per Blambot guidelines
             Text("PANEL \(panel.panelNumber)")
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .font(.system(size: 16, weight: .bold))
+                .padding(.bottom, 4)
             
             // Panel description
             if !panel.details.isEmpty {
                 Text(panel.details)
                     .font(.body)
                     .padding(.leading, format == .compact ? 8 : 16)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 8)
             }
             
-            // Character dialogues
-            ForEach(panel.characters.sorted(by: { $0.createdAt < $1.createdAt })) { character in
-                FormattedCharacterView(character: character, format: format)
+            // Character dialogues - Numbered per Blambot guidelines
+            ForEach(Array(panel.characters.sorted(by: { $0.createdAt < $1.createdAt }).enumerated()), id: \.element.id) { index, character in
+                FormattedCharacterView(character: character, index: index + 1, format: format)
             }
             
             Spacer()
-                .frame(height: 10)
+                .frame(height: 12)
         }
         .padding(.leading, format == .compact ? 8 : 16)
-        .padding(.bottom, 8)
+        .padding(.bottom, 12)
     }
 }
 
 struct FormattedCharacterView: View {
     let character: Character
+    let index: Int
     let format: ScriptPreviewView.ExportFormat
+    
+    // Parse any modifiers in character names like "CHARACTER (WHISPER)"
+    private var characterNameAndModifier: (name: String, modifier: String?) {
+        let fullName = character.name
+        
+        // Check if there's a modifier in parentheses
+        if let openParenIndex = fullName.lastIndex(of: "("),
+           let closeParenIndex = fullName.lastIndex(of: ")"),
+           openParenIndex < closeParenIndex {
+            
+            let baseName = fullName[..<openParenIndex].trimmingCharacters(in: .whitespaces)
+            let modifierRange = fullName.index(after: openParenIndex)..<closeParenIndex
+            let modifier = String(fullName[modifierRange])
+            
+            return (name: String(baseName), modifier: modifier)
+        }
+        
+        return (name: fullName, modifier: nil)
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Special formatting for captions and SFX
-            if character.name == "CAPTION" {
-                if !character.dialogue.isEmpty {
-                    Text("CAPTION:")
-                        .font(.system(.subheadline, design: .monospaced))
-                        .fontWeight(.bold)
-                    
-                    Text(character.dialogue)
-                        .font(.system(.body, design: .serif))
-                        .italic()
-                        .padding(.leading, format == .compact ? 8 : 16)
-                }
-            } else if character.name == "SFX" {
-                if !character.dialogue.isEmpty {
-                    Text("SFX:")
-                        .font(.system(.subheadline, design: .monospaced))
-                        .fontWeight(.bold)
-                    
-                    Text(character.dialogue)
-                        .font(.system(.body, design: .monospaced))
-                        .fontWeight(.semibold)
-                        .padding(.leading, format == .compact ? 8 : 16)
-                }
-            } else {
-                // Regular character dialogue
-                if !character.dialogue.isEmpty {
-                    Text(character.name + ":")
-                        .font(.system(.subheadline, design: .default))
-                        .fontWeight(.bold)
-                    
-                    Text(character.dialogue)
-                        .font(.body)
-                        .padding(.leading, format == .compact ? 8 : 16)
+            HStack(alignment: .top) {
+                // Item number per Blambot guidelines
+                Text("\(index).")
+                    .font(.system(.body, design: .monospaced))
+                    .fontWeight(.bold)
+                    .frame(width: 24, alignment: .leading)
+                
+                // Character name with proper formatting
+                if character.name == "CAPTION" {
+                    if !character.dialogue.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("CAPTION:")
+                                .font(.system(.subheadline, design: .monospaced))
+                                .fontWeight(.bold)
+                            
+                            Text(character.dialogue)
+                                .font(.system(.body, design: .serif))
+                                .italic()
+                                .padding(.leading, format == .compact ? 8 : 16)
+                        }
+                    }
+                } else if character.name == "SFX" {
+                    if !character.dialogue.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("SFX:")
+                                .font(.system(.subheadline, design: .monospaced))
+                                .fontWeight(.bold)
+                            
+                            Text(character.dialogue)
+                                .font(.system(.body, design: .monospaced))
+                                .fontWeight(.semibold)
+                                .padding(.leading, format == .compact ? 8 : 16)
+                        }
+                    }
+                } else {
+                    // Regular character dialogue
+                    if !character.dialogue.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            // Format character name with any modifier
+                            let nameInfo = characterNameAndModifier
+                            Text(nameInfo.name.uppercased() + (nameInfo.modifier != nil ? " (\(nameInfo.modifier!))" : "") + ":")
+                                .font(.system(.subheadline, design: .default))
+                                .fontWeight(.bold)
+                            
+                            // Dialogue with proper indentation
+                            Text(character.dialogue)
+                                .font(.body)
+                                .padding(.leading, format == .compact ? 8 : 16)
+                        }
+                    }
                 }
             }
         }
-        .padding(.leading, format == .compact ? 8 : 16)
-        .padding(.bottom, 4)
+        .padding(.vertical, 4)
+    }
+}
+
+struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    let issue: ComicIssue
+    
+    @State private var selectedCoverStyle: CoverStyle
+    @State private var showTitles: Bool
+    @State private var titlePosition: TitlePosition
+    
+    // Initialize with the current issue's settings
+    init(issue: ComicIssue) {
+        self.issue = issue
+        // Convert from string to enum
+        self._selectedCoverStyle = State(initialValue: CoverStyle(rawValue: issue.coverImageType.capitalized) ?? .classic)
+        self._showTitles = State(initialValue: issue.showCoverTitle)
+        self._titlePosition = State(initialValue: TitlePosition(rawValue: issue.coverTitlePosition.capitalized) ?? .bottom)
+    }
+    
+    enum CoverStyle: String, CaseIterable, Identifiable {
+        case classic = "Classic"
+        case modern = "Modern"
+        case minimal = "Minimal"
+        case custom = "Custom"
+        
+        var id: String { self.rawValue }
+        
+        var imageName: String {
+            switch self {
+                case .classic: return "coverPlaceholder1"
+                case .modern: return "coverPlaceholder2"
+                case .minimal: return "coverPlaceholder3"
+                case .custom: return "coverPlaceholder4"
+            }
+        }
+    }
+    
+    enum TitlePosition: String, CaseIterable, Identifiable {
+        case top = "Top"
+        case bottom = "Bottom"
+        case overlay = "Overlay"
+        
+        var id: String { self.rawValue }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Cover Images") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Cover Style")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Picker("Cover Style", selection: $selectedCoverStyle) {
+                            ForEach(CoverStyle.allCases) { style in
+                                Text(style.rawValue).tag(style)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.bottom, 10)
+                        
+                        Toggle("Show Title on Cover", isOn: $showTitles)
+                            .padding(.bottom, 6)
+                        
+                        if showTitles {
+                            Text("Title Position")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 4)
+                            
+                            Picker("Title Position", selection: $titlePosition) {
+                                ForEach(TitlePosition.allCases) { position in
+                                    Text(position.rawValue).tag(position)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.bottom, 10)
+                        }
+                        
+                        // Cover preview
+                        VStack {
+                            if selectedCoverStyle == .custom {
+                                CustomCoverSelector(
+                                    issue: issue, 
+                                    showTitle: showTitles,
+                                    titlePosition: titlePosition
+                                )
+                            } else {
+                                CoverPreview(
+                                    coverStyle: selectedCoverStyle,
+                                    issue: issue,
+                                    showTitle: showTitles,
+                                    titlePosition: titlePosition
+                                )
+                            }
+                        }
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("General") {
+                    Text("App Version: 1.0.0")
+                    
+                    NavigationLink("Export Options") {
+                        Text("Export preferences would go here")
+                    }
+                }
+                
+                Section("About") {
+                    Text("ComicsWriter - Your Scripting Companion")
+                    
+                    Link("Visit Website", destination: URL(string: "https://example.com")!)
+                        .foregroundColor(.blue)
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        saveSettings()
+                        dismiss()
+                    }
+                }
+                
+                // Add keyboard toolbar for any text fields that might be added in the future
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), 
+                                                      to: nil, from: nil, for: nil)
+                    }
+                }
+            }
+        }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+    }
+    
+    private func saveSettings() {
+        // Save the cover settings to the issue
+        issue.coverImageType = selectedCoverStyle.rawValue.lowercased()
+        issue.coverTitlePosition = titlePosition.rawValue.lowercased()
+        issue.showCoverTitle = showTitles
+        issue.updatedAt = Date()
+    }
+}
+
+struct CoverPreview: View {
+    let coverStyle: SettingsView.CoverStyle
+    let issue: ComicIssue
+    let showTitle: Bool
+    let titlePosition: SettingsView.TitlePosition
+    
+    var body: some View {
+        ZStack(alignment: getAlignment()) {
+            // Cover image
+            Image(coverStyle.imageName)
+                .resizable()
+                .scaledToFill()
+            
+            // Title overlay - semi-transparent gradient at bottom only
+            if showTitle {
+                VStack(spacing: 4) {
+                    Text(issue.title)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                    
+                    Text("ISSUE #\(issue.issueNumber)")
+                        .font(.headline)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(getGradient())
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func getAlignment() -> Alignment {
+        switch titlePosition {
+            case .top: return .top
+            case .overlay: return .center
+            default: return .bottom
+        }
+    }
+    
+    private func getGradient() -> LinearGradient {
+        if titlePosition == .overlay {
+            return LinearGradient(
+                colors: [Color.black.opacity(0.4), Color.black.opacity(0.4)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            return LinearGradient(
+                colors: [Color.black.opacity(0.7), Color.black.opacity(0)],
+                startPoint: titlePosition == .top ? .top : .bottom,
+                endPoint: titlePosition == .top ? .bottom : .top
+            )
+        }
+    }
+}
+
+struct CustomCoverSelector: View {
+    @Environment(\.modelContext) private var modelContext
+    let issue: ComicIssue
+    let showTitle: Bool
+    let titlePosition: SettingsView.TitlePosition
+    
+    @State private var showingImagePicker = false
+    @State private var selectedImage: UIImage?
+    
+    var body: some View {
+        ZStack(alignment: getAlignment()) {
+            if let image = selectedImage ?? (issue.customCoverImageData != nil ? UIImage(data: issue.customCoverImageData!) : nil) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .overlay(alignment: .bottomTrailing) {
+                        Button {
+                            showingImagePicker = true
+                        } label: {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 2)
+                                .padding(8)
+                        }
+                    }
+                
+                // Show title if needed
+                if showTitle {
+                    VStack(spacing: 4) {
+                        Text(issue.title)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                        
+                        Text("ISSUE #\(issue.issueNumber)")
+                            .font(.headline)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(getGradient())
+                }
+            } else {
+                Color(.systemGray5)
+                    .overlay {
+                        VStack(spacing: 12) {
+                            Image(systemName: "photo.badge.plus")
+                                .font(.largeTitle)
+                            
+                            Text("Select Custom Cover")
+                                .font(.headline)
+                            
+                            Button {
+                                showingImagePicker = true
+                            } label: {
+                                Text("Choose Image")
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
+                            }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showingImagePicker) {
+            ImagePicker(image: $selectedImage)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+        }
+    }
+    
+    private func getAlignment() -> Alignment {
+        switch titlePosition {
+            case .top: return .top
+            case .overlay: return .center
+            default: return .bottom
+        }
+    }
+    
+    private func getGradient() -> LinearGradient {
+        if titlePosition == .overlay {
+            return LinearGradient(
+                colors: [Color.black.opacity(0.4), Color.black.opacity(0.4)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            return LinearGradient(
+                colors: [Color.black.opacity(0.7), Color.black.opacity(0)],
+                startPoint: titlePosition == .top ? .top : .bottom,
+                endPoint: titlePosition == .top ? .bottom : .top
+            )
+        }
+    }
+}
+
+// Helper struct for measuring text view height
+struct ViewHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Series.self, Issue.self, Page.self, Panel.self, Character.self, configurations: config)
+    let container = try! ModelContainer(for: Series.self, ComicIssue.self, Page.self, Panel.self, Character.self, configurations: config)
     
     let previewSeries = Series(title: "Example Series")
-    let previewIssue = Issue(title: "First Issue", issueNumber: 1, series: previewSeries)
+    let previewIssue = ComicIssue(title: "First Issue", issueNumber: 1, series: previewSeries)
     let previewPage = Page(pageNumber: 1, issue: previewIssue)
     let previewPanel = Panel(panelNumber: 1, details: "Our hero stands triumphantly on a rooftop.", page: previewPage)
     let previewCharacter = Character(name: "Hero", dialogue: "I have saved the day once again!", panel: previewPanel)

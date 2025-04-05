@@ -7,8 +7,8 @@ final class Series {
     var title: String
     var synopsis: String
     var coverImageData: Data?
-    @Relationship(deleteRule: .cascade, inverse: \Issue.series)
-    var issues: [Issue] = []
+    @Relationship(deleteRule: .cascade, inverse: \ComicIssue.series)
+    var issues: [ComicIssue] = []
     var createdAt: Date
     var updatedAt: Date
     
@@ -29,7 +29,7 @@ final class Series {
 }
 
 @Model
-final class Issue {
+final class ComicIssue {
     var title: String
     var issueNumber: Int
     var synopsis: String
@@ -61,13 +61,13 @@ final class Issue {
 @Model
 final class Page {
     var pageNumber: Int
-    var issue: Issue?
+    var issue: ComicIssue?
     @Relationship(deleteRule: .cascade, inverse: \Panel.page)
     var panels: [Panel] = []
     var createdAt: Date
     var updatedAt: Date
     
-    init(pageNumber: Int, issue: Issue? = nil) {
+    init(pageNumber: Int, issue: ComicIssue? = nil) {
         self.pageNumber = pageNumber
         self.issue = issue
         self.createdAt = Date()

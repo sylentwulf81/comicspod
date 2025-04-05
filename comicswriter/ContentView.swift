@@ -16,5 +16,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Series.self, Issue.self, Page.self, Panel.self, Character.self], inMemory: true)
+        .modelContainer(for: [Series.self, ComicIssue.self, Page.self, Panel.self, Character.self], inMemory: true)
 }
