@@ -3,102 +3,199 @@ import SwiftData
 
 struct SeriesListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Series.createdAt, order: .reverse) private var series: [Series]
-    @State private var showingAddSeriesSheet = false
-    @State private var seriesForDeletion: Series? = nil
-    @State private var showingDeleteConfirmation = false
+    @Query private var series: [Series]
+    @State private var showingAddSeries = false
+    @State private var searchText = ""
+    @State private var selectedCategory: CoverCategory? = nil
     
-    private let gridColumns = [
-        GridItem(.adaptive(minimum: 150), spacing: 20)
-    ]
+    // Apply both text search and category filter
+    private var filteredSeries: [Series] {
+        series.filter { item in
+            let matchesText = searchText.isEmpty || 
+                item.title.localizedCaseInsensitiveContains(searchText) ||
+                item.synopsis.localizedCaseInsensitiveContains(searchText)
+            
+            let matchesCategory = selectedCategory == nil || 
+                item.category == selectedCategory
+                
+            return matchesText && matchesCategory
+        }
+    }
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: gridColumns, spacing: 20) {
-                    ForEach(series) { seriesItem in
-                        ZStack(alignment: .topTrailing) {
-                            NavigationLink(destination: IssueGridView(series: seriesItem)) {
-                                SeriesCoverView(series: seriesItem)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            
-                            // Options menu for each series
-                            Menu {
-                                Button(role: .destructive) {
-                                    seriesForDeletion = seriesItem
-                                    showingDeleteConfirmation = true
-                                } label: {
-                                    Label("Delete Series", systemImage: "trash")
+            VStack(spacing: 0) {
+                // Category filter chips
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        // All category option
+                        CategoryChip(
+                            category: nil, 
+                            isSelected: selectedCategory == nil,
+                            action: { selectedCategory = nil }
+                        )
+                        
+                        // Individual categories
+                        ForEach(CoverCategory.allCases, id: \.self) { category in
+                            CategoryChip(
+                                category: category,
+                                isSelected: selectedCategory == category,
+                                action: { 
+                                    if selectedCategory == category {
+                                        selectedCategory = nil
+                                    } else {
+                                        selectedCategory = category 
+                                    }
                                 }
-                            } label: {
-                                Image(systemName: "ellipsis.circle.fill")
-                                    .font(.system(size: 22))
-                                    .foregroundColor(.white)
-                                    .shadow(radius: 2)
-                                    .padding(8)
-                            }
+                            )
                         }
                     }
-                    
-                    // Add new series button
-                    Button(action: { showingAddSeriesSheet = true }) {
-                        VStack {
-                            Image(systemName: "plus.circle")
-                                .font(.system(size: 40))
-                            Text("New Series")
-                                .font(.caption)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                }
+                .background(Color(.systemBackground))
+                
+                // Series list
+                List {
+                    ForEach(filteredSeries) { seriesItem in
+                        NavigationLink {
+                            IssueListView(series: seriesItem)
+                        } label: {
+                            SeriesRowView(series: seriesItem)
                         }
-                        .frame(width: 150, height: 200)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(10)
+                    }
+                    .onDelete(perform: deleteSeries)
+                }
+                .listStyle(.plain)
+                .searchable(text: $searchText, prompt: "Search series")
+            }
+            .navigationTitle("Series")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showingAddSeries = true
+                    } label: {
+                        Label("Add Series", systemImage: "plus")
                     }
                 }
-                .padding()
             }
-            .navigationTitle("Comic Series")
-            .sheet(isPresented: $showingAddSeriesSheet) {
-                AddSeriesSheet()
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-            }
-            .alert("Delete Series", isPresented: $showingDeleteConfirmation) {
-                Button("Cancel", role: .cancel) {
-                    seriesForDeletion = nil
-                }
-                Button("Delete", role: .destructive) {
-                    if let seriesItem = seriesForDeletion {
-                        deleteSeries(seriesItem)
-                        seriesForDeletion = nil
-                    }
-                }
-            } message: {
-                if let seriesItem = seriesForDeletion {
-                    Text("Are you sure you want to delete \"\(seriesItem.title)\"? This will delete all issues and pages within this series. This action cannot be undone.")
-                } else {
-                    Text("Are you sure you want to delete this series?")
-                }
+            .sheet(isPresented: $showingAddSeries) {
+                AddSeriesView()
             }
         }
     }
     
-    private func deleteSeries(_ series: Series) {
-        // First delete all associated issues, pages, panels, and characters
-        for issue in series.issues {
-            for page in issue.pages {
-                for panel in page.panels {
-                    // Delete all characters in the panel
-                    for character in panel.characters {
-                        modelContext.delete(character)
-                    }
-                    modelContext.delete(panel)
-                }
-                modelContext.delete(page)
-            }
-            modelContext.delete(issue)
+    private func deleteSeries(offsets: IndexSet) {
+        for index in offsets {
+            let seriesToDelete = filteredSeries[index]
+            modelContext.delete(seriesToDelete)
         }
-        
-        // Then delete the series itself
-        modelContext.delete(series)
+    }
+}
+
+// Category chip component for filtering
+struct CategoryChip: View {
+    let category: CoverCategory?
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(category?.rawValue ?? "All")
+                .font(.caption)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(isSelected ? 
+                              (category?.color ?? Color.primary).opacity(0.2) : 
+                              Color(.systemGray6))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(isSelected ? 
+                                (category?.color ?? Color.primary).opacity(0.5) : 
+                                Color(.systemGray4), 
+                                lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// Update SeriesRowView to show the category
+struct SeriesRowView: View {
+    let series: Series
+    @State private var showEditSheet = false
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Series cover image or placeholder
+            if let image = series.coverImage {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 60, height: 80)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+            } else {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 60, height: 80)
+                    .cornerRadius(6)
+                    .overlay(
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 24))
+                            .foregroundColor(.gray)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(series.title)
+                    .font(.headline)
+                
+                Text("\(series.issues.count) issue\(series.issues.count == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                // Category badge
+                Text(series.category.rawValue)
+                    .font(.caption)
+                    .foregroundColor(series.category.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(series.category.color.opacity(0.1))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(series.category.color.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                showEditSheet = true
+            }) {
+                Image(systemName: "pencil")
+                    .foregroundColor(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 8)
+        .sheet(isPresented: $showEditSheet) {
+            EditSeriesView(series: series)
+        }
     }
 }
 
@@ -301,6 +398,143 @@ struct AddSeriesSheet: View {
         )
         
         modelContext.insert(newSeries)
+    }
+}
+
+// Edit Series View
+struct EditSeriesView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    let series: Series
+    
+    @State private var title: String
+    @State private var synopsis: String
+    @State private var selectedCategory: CoverCategory
+    @State private var showImagePicker = false
+    @State private var coverImage: UIImage?
+    
+    init(series: Series) {
+        self.series = series
+        _title = State(initialValue: series.title)
+        _synopsis = State(initialValue: series.synopsis)
+        _selectedCategory = State(initialValue: series.category)
+        
+        if let imageData = series.coverImageData, 
+           let uiImage = UIImage(data: imageData) {
+            _coverImage = State(initialValue: uiImage)
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Series Information") {
+                    TextField("Title", text: $title)
+                    
+                    TextField("Synopsis", text: $synopsis, axis: .vertical)
+                        .lineLimit(4, reservesSpace: true)
+                }
+                
+                Section("Cover Category") {
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(CoverCategory.allCases, id: \.self) { category in
+                            Label(category.rawValue, systemImage: categoryIcon(for: category))
+                                .foregroundColor(category.color)
+                                .tag(category)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                }
+                
+                Section("Cover Image") {
+                    HStack {
+                        Spacer()
+                        
+                        if let image = coverImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 200)
+                                .cornerRadius(8)
+                        } else {
+                            VStack(spacing: 12) {
+                                Image(systemName: "photo")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("No Image Selected")
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(height: 200)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        showImagePicker = true
+                    }
+                }
+            }
+            .navigationTitle("Edit Series")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        updateSeries()
+                    }
+                    .disabled(title.isEmpty)
+                }
+            }
+            .sheet(isPresented: $showImagePicker) {
+                ImagePicker(image: $coverImage)
+            }
+        }
+    }
+    
+    private func updateSeries() {
+        // Only update if title is not empty
+        guard !title.isEmpty else { return }
+        
+        // Update series properties
+        series.title = title
+        series.synopsis = synopsis
+        series.category = selectedCategory
+        
+        // Update cover image if changed
+        if let image = coverImage {
+            series.coverImageData = image.jpegData(compressionQuality: 0.8)
+        }
+        
+        // Update timestamp
+        series.updatedAt = Date()
+        
+        // Dismiss sheet
+        dismiss()
+    }
+    
+    // Helper to get appropriate icon for each category
+    private func categoryIcon(for category: CoverCategory) -> String {
+        switch category {
+        case .superhero: return "bolt.fill"
+        case .horror: return "ghost.fill"
+        case .sciFi: return "planet"
+        case .fantasy: return "wand.and.stars"
+        case .action: return "flame.fill"
+        case .drama: return "theatermasks.fill"
+        case .comedy: return "face.smiling.fill"
+        case .western: return "tent.fill"
+        case .crime: return "magnifyingglass"
+        case .indie: return "music.note.list"
+        case .other: return "book.fill"
+        }
     }
 }
 
